@@ -1,0 +1,28 @@
+
+> frontend@0.0.0 lint
+> eslint .
+
+
+C:\Users\ms23v\OneDrive\Desktop\Member Risk Stratification\frontend\src\components\MemberDetailsDrawer.jsx
+   9:49  error  'Icon' is defined but never used                                                               no-unused-vars
+  54:11  error  'scoreHeart' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u     no-unused-vars
+  55:11  error  'scoreDiabetes' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+C:\Users\ms23v\OneDrive\Desktop\Member Risk Stratification\frontend\src\pages\Analytics.jsx
+  10:50  error  'Icon' is defined but never used                                                             no-unused-vars
+  46:17  error  'totalClaims' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+C:\Users\ms23v\OneDrive\Desktop\Member Risk Stratification\frontend\src\pages\Dashboard.jsx
+  55:18  error  'e' is defined but never used  no-unused-vars
+  68:57  error  'e' is defined but never used  no-unused-vars
+  69:57  error  'e' is defined but never used  no-unused-vars
+  70:57  error  'e' is defined but never used  no-unused-vars
+  71:53  error  'e' is defined but never used  no-unused-vars
+  72:49  error  'e' is defined but never used  no-unused-vars
+  80:18  error  'e' is defined but never used  no-unused-vars
+
+C:\Users\ms23v\OneDrive\Desktop\Member Risk Stratification\frontend\src\pages\PopulationDashboard.jsx
+  21:50  error  'Icon' is defined but never used  no-unused-vars
+
+✖ 13 problems (13 errors, 0 warnings)
+
