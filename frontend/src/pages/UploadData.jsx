@@ -195,6 +195,8 @@ const UploadData = () => {
                                 <tbody>
                                     {results.map((res, idx) => {
                                         const getOverallRisk = () => {
+                                            if (res?.final_risk_tier) return res.final_risk_tier;
+
                                             const levels = ['Very Low', 'Low', 'Medium', 'High', 'Very High'];
                                             const r30 = res.deterioration_30d?.risk_level || 'Low';
                                             const r60 = res.deterioration_60d?.risk_level || 'Low';
@@ -235,7 +237,9 @@ const UploadData = () => {
                                                     </span>
                                                 </td>
                                                 <td style={{ padding: '20px 32px', color: '#475569', fontSize: '0.95rem' }}>
-                                                    {isHigh ? (
+                                                    {res?.intervention ? (
+                                                        <span style={{ fontWeight: '600', color: isHigh ? '#b91c1c' : '#475569' }}>{res.intervention}</span>
+                                                    ) : isHigh ? (
                                                         <span style={{ fontWeight: '600', color: '#b91c1c' }}>Urgent Care Manager Assignment Required</span>
                                                     ) : (
                                                         isMedium ? 'Baseline screening and nurse follow-up' : 'Mobile health monitoring and wellness guidance'

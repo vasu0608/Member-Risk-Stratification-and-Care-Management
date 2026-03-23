@@ -13,11 +13,19 @@ for _ in range(100):
     }
     r = requests.post('http://localhost:8000/predict/batch', json={'patients': [p]})
     res = r.json()[0]
-    # Check final tier logic
-    tier_order = ["Very Low", "Low", "Medium", "High", "Very High"]
-    all_tiers = [v.get('risk_level') for v in res.values()]
-    max_idx = max([tier_order.index(t) for t in all_tiers])
-    final_tier = tier_order[max_idx]
+    # Prefer authoritative final tier from backend; fallback to model-risk aggregation.
+    final_tier = res.get('final_risk_tier')
+    if not final_tier:
+        tier_order = ["Very Low", "Low", "Medium", "High", "Very High"]
+        all_tiers = [
+            v.get('risk_level')
+            for v in res.values()
+            if isinstance(v, dict) and v.get('risk_level') in tier_order
+        ]
+        if not all_tiers:
+            continue
+        max_idx = max([tier_order.index(t) for t in all_tiers])
+        final_tier = tier_order[max_idx]
     
     if final_tier not in tiers_found:
         print(f"Found {final_tier} for Age {age}")

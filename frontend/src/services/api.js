@@ -46,5 +46,6 @@ export const batchPredict = (patients) => api.post('/predict/batch', { patients 
 export const saveMember = (data) => api.post('/members', data);
 export const getMembers = () => api.get('/members');
 export const seedData = () => api.post('/seed');
+export const getLiveMonitoring = () => api.get('/monitoring/live');
 
 export default api;

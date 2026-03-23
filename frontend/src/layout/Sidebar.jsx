@@ -7,9 +7,11 @@ import {
     Upload,
     UserPlus,
     Activity,
+    HeartPulse,
     LogOut,
     TrendingUp,
-    ChevronRight
+    ChevronRight,
+    SlidersHorizontal
 } from 'lucide-react';
 import { logout } from '../services/api';
 
@@ -21,9 +23,11 @@ const Sidebar = () => {
 
     const navItems = [
         { to: "/", icon: <LayoutDashboard size={20} />, label: "Health Overview" },
+        { to: "/monitoring", icon: <HeartPulse size={20} />, label: "Real Time Monitoring" },
         { to: "/analytics", icon: <TrendingUp size={20} />, label: "Analytics" },
         { to: "/add-member", icon: <UserPlus size={20} />, label: "Add Member Form" },
         { to: "/upload", icon: <Upload size={20} />, label: "Batch CSV Upload" },
+        { to: "/settings", icon: <SlidersHorizontal size={20} />, label: "Settings" },
     ];
 
     return (
@@ -34,13 +38,13 @@ const Sidebar = () => {
             style={{
                 width: '270px',
                 height: '100vh',
-                background: 'linear-gradient(180deg, #0f172a 0%, #1e293b 100%)',
-                color: 'white',
+                background: 'var(--sidebar-bg)',
+                color: 'var(--sidebar-text)',
                 display: 'flex',
                 flexDirection: 'column',
                 position: 'fixed',
                 zIndex: 100,
-                boxShadow: '4px 0 24px rgba(0,0,0,0.1)'
+                boxShadow: '4px 0 24px rgba(0,0,0,0.18)'
             }}
         >
             <div style={{ padding: '32px 24px', position: 'relative', overflow: 'hidden' }}>
@@ -84,12 +88,12 @@ const Sidebar = () => {
                                 justifyContent: 'space-between',
                                 padding: '12px 16px',
                                 marginBottom: '8px',
-                                color: isActive ? 'white' : 'rgba(255,255,255,0.6)',
-                                background: isActive ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
+                                color: isActive ? 'var(--sidebar-text)' : 'var(--sidebar-muted)',
+                                background: isActive ? 'var(--sidebar-active)' : 'transparent',
                                 textDecoration: 'none',
                                 borderRadius: '12px',
                                 transition: 'all 0.3s ease',
-                                border: isActive ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid transparent'
+                                border: isActive ? '1px solid var(--sidebar-active-border)' : '1px solid transparent'
                             })}
                         >
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -102,7 +106,7 @@ const Sidebar = () => {
                 ))}
             </nav>
 
-            <div style={{ padding: '24px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+            <div style={{ padding: '24px', borderTop: '1px solid var(--sidebar-separator)' }}>
                 <motion.button
                     whileHover={{ x: 5, color: '#ef4444' }}
                     onClick={handleLogout}
@@ -112,7 +116,7 @@ const Sidebar = () => {
                         gap: '12px',
                         background: 'transparent',
                         border: 'none',
-                        color: 'rgba(255,255,255,0.5)',
+                        color: 'var(--sidebar-muted)',
                         cursor: 'pointer',
                         padding: '10px',
                         width: '100%',

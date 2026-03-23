@@ -6,23 +6,25 @@ import PopulationDashboard from './pages/PopulationDashboard';
 import UploadData from './pages/UploadData';
 import AddMember from './pages/AddMember';
 import Analytics from './pages/Analytics';
+import RealTimeMonitoring from './pages/RealTimeMonitoring';
+import Settings from './pages/Settings';
 
 function App() {
   return (
     <Router>
-      <div style={{ display: 'flex', minHeight: '100vh', background: '#f8fafc' }}>
-        {/* Sidebar Fixed Width */}
-        <div style={{ width: '250px', flexShrink: 0 }}>
-          <Sidebar />
-        </div>
+      <div className="app-shell">
+        {/* Sidebar is fixed-positioned; content offset is handled in CSS. */}
+        <Sidebar />
 
         {/* Main Content Area */}
-        <div style={{ flex: 1, overflowX: 'hidden' }}>
+        <div className="app-main-content">
           <Routes>
             <Route path="/" element={<PopulationDashboard />} />
+            <Route path="/monitoring" element={<RealTimeMonitoring />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/add-member" element={<AddMember />} />
             <Route path="/upload" element={<UploadData />} />
+            <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>

@@ -1,5 +1,5 @@
-from backend.database import engine, Base
-from backend.models import Patient, RiskScore
+from backend.app.database import engine, Base
+from backend.app.models import Patient, RiskScore
 
 def reset_db():
     print("Dropping all tables...")

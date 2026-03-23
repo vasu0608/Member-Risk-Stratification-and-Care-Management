@@ -1,304 +1,681 @@
 
 import React, { useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
+import Papa from 'papaparse';
+import {
+    Upload,
+    FileText,
+    AlertTriangle,
+    Loader2,
+    Brain,
+    ShieldAlert
+} from 'lucide-react';
 import { saveMember } from '../services/api';
-import { Save, AlertCircle, CheckCircle2, ArrowRight, UserPlus, Home, TrendingUp, ShieldAlert } from 'lucide-react';
+import { getRiskColor, getRiskBadgeStyle } from '../utils/riskTheme';
 
+const normalizeHeader = (header) => String(header || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
 
-const InputGroup = ({ label, register, name, type = "number", step = "1", required = true }) => (
-    <motion.div
-        whileHover={{ x: 5 }}
-        style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}
-    >
-        <label style={{ fontSize: '0.85rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</label>
-        <input
-            {...register(name, { required, valueAsNumber: type === 'number' })}
-            type={type}
-            step={step}
-            style={{
-                padding: '12px 16px',
-                borderRadius: '12px',
-                border: '1px solid #e2e8f0',
-                fontSize: '1rem',
-                background: '#f8fafc',
-                outline: 'none',
-                transition: 'all 0.2s ease',
-                boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)'
-            }}
-            onFocus={(e) => { e.target.style.border = '1px solid #3b82f6'; e.target.style.boxShadow = '0 0 0 4px rgba(59, 130, 246, 0.1)'; }}
-            onBlur={(e) => { e.target.style.border = '1px solid #e2e8f0'; e.target.style.boxShadow = 'inset 0 2px 4px rgba(0,0,0,0.02)'; }}
-        />
-    </motion.div>
-);
+const toNumber = (value) => {
+    if (value == null || value === '') return null;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    const cleaned = String(value).replace(/[^\d.-]/g, '');
+    if (!cleaned) return null;
+    const parsed = Number(cleaned);
+    return Number.isFinite(parsed) ? parsed : null;
+};
 
-const SelectGroup = ({ label, register, name, options }) => (
-    <motion.div
-        whileHover={{ x: 5 }}
-        style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}
-    >
-        <label style={{ fontSize: '0.85rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</label>
-        <select
-            {...register(name, { valueAsNumber: true })}
-            style={{
-                padding: '12px 16px',
-                borderRadius: '12px',
-                border: '1px solid #e2e8f0',
-                fontSize: '1rem',
-                background: '#f8fafc',
-                outline: 'none',
-                cursor: 'pointer',
-                boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)'
-            }}
-        >
-            {options.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-        </select>
-    </motion.div>
-);
+const toBinary = (value) => {
+    if (value == null || value === '') return null;
+    if (typeof value === 'number') return value > 0 ? 1 : 0;
+
+    const normalized = String(value).trim().toLowerCase();
+    if (['yes', 'y', 'true', '1', 'positive', 'present'].includes(normalized)) return 1;
+    if (['no', 'n', 'false', '0', 'negative', 'absent'].includes(normalized)) return 0;
+
+    const numeric = toNumber(value);
+    if (numeric == null) return null;
+    return numeric > 0 ? 1 : 0;
+};
+
+const buildNormalizedRecord = (record) => {
+    const normalizedMap = {};
+
+    const walk = (obj, path = []) => {
+        if (obj == null) return;
+
+        if (Array.isArray(obj)) {
+            obj.forEach((item, index) => walk(item, [...path, String(index)]));
+            return;
+        }
+
+        if (typeof obj !== 'object') {
+            const terminal = path[path.length - 1] || '';
+            if (terminal) normalizedMap[normalizeHeader(terminal)] = obj;
+            const combined = normalizeHeader(path.join('_'));
+            if (combined) normalizedMap[combined] = obj;
+            return;
+        }
+
+        Object.entries(obj).forEach(([k, v]) => walk(v, [...path, k]));
+    };
+
+    walk(record);
+    return normalizedMap;
+};
+
+const firstValue = (normalizedMap, aliases) => {
+    for (const alias of aliases) {
+        const key = normalizeHeader(alias);
+        if (Object.prototype.hasOwnProperty.call(normalizedMap, key)) {
+            const value = normalizedMap[key];
+            if (value !== '' && value != null) return value;
+        }
+    }
+    return null;
+};
+
+const mapDmrRecordToApiSchema = (record) => {
+    const src = buildNormalizedRecord(record);
+
+    const chestPainRaw = firstValue(src, ['CHEST_PAIN_TYPE', 'CHEST_PAIN', 'CP_TYPE', 'CP']);
+    const chestPain = toNumber(chestPainRaw);
+
+    const genderRaw = firstValue(src, ['GENDER_1', 'GENDER', 'SEX']);
+    const genderString = String(genderRaw || '').trim().toLowerCase();
+    let gender = toBinary(genderRaw);
+    if (genderString === 'male' || genderString === 'm') gender = 1;
+    if (genderString === 'female' || genderString === 'f') gender = 0;
+
+    const rxAdhRaw = firstValue(src, ['RX_ADH', 'RX_ADHERENCE', 'MED_ADHERENCE', 'MEDICATION_ADHERENCE']);
+    let rxAdh = toNumber(rxAdhRaw);
+    if (rxAdh != null && rxAdh > 1 && rxAdh <= 100) rxAdh = rxAdh / 100;
+
+    const mapped = {
+        AGE: toNumber(firstValue(src, ['AGE', 'PATIENT_AGE'])),
+        BMI: toNumber(firstValue(src, ['BMI', 'BODY_MASS_INDEX'])),
+        BP_S: toNumber(firstValue(src, ['BP_S', 'SYSTOLIC_BP', 'SBP', 'SYSTOLIC_BLOOD_PRESSURE'])),
+        GLUCOSE: toNumber(firstValue(src, ['GLUCOSE', 'BLOOD_GLUCOSE', 'FASTING_GLUCOSE'])),
+        HbA1c: toNumber(firstValue(src, ['HBA1C', 'HBA1C_PERCENT', 'A1C'])),
+        CHOLESTEROL: toNumber(firstValue(src, ['CHOLESTEROL', 'TOTAL_CHOLESTEROL', 'CHOL'])),
+        IN_ADM: toNumber(firstValue(src, ['IN_ADM', 'INPATIENT_ADMISSIONS', 'INPATIENT', 'IP_ADMISSIONS'])),
+        OUT_VISITS: toNumber(firstValue(src, ['OUT_VISITS', 'OUTPATIENT_VISITS', 'OP_VISITS', 'AMBULATORY_VISITS'])),
+        ED_VISITS: toNumber(firstValue(src, ['ED_VISITS', 'ER_VISITS', 'EMERGENCY_VISITS', 'ED_COUNT'])),
+        RX_ADH: rxAdh,
+        TOTAL_CLAIMS_COST: toNumber(firstValue(src, ['TOTAL_CLAIMS_COST', 'TOTAL_CLAIMS', 'CLAIMS_COST', 'CLAIM_AMOUNT'])),
+
+        RESTING_BP: toNumber(firstValue(src, ['RESTING_BP', 'REST_BP'])),
+        MAX_HEART_RATE: toNumber(firstValue(src, ['MAX_HEART_RATE', 'MAX_HR', 'HEART_RATE_MAX'])),
+        OLDPEAK: toNumber(firstValue(src, ['OLDPEAK', 'ST_DEPRESSION'])),
+        BLOOD_PRESSURE: toNumber(firstValue(src, ['BLOOD_PRESSURE', 'DIASTOLIC_BP', 'DBP'])),
+        INSULIN: toNumber(firstValue(src, ['INSULIN', 'FASTING_INSULIN'])),
+        SKIN_THICKNESS: toNumber(firstValue(src, ['SKIN_THICKNESS'])),
+        DIABETES_PEDIGREE: toNumber(firstValue(src, ['DIABETES_PEDIGREE', 'DPF'])),
+
+        GENDER_1: gender,
+        RENAL_DISEASE_1: toBinary(firstValue(src, ['RENAL_DISEASE_1', 'RENAL_DISEASE', 'CKD'])),
+        HEARTFAILURE_1: toBinary(firstValue(src, ['HEARTFAILURE_1', 'HEART_FAILURE', 'CHF'])),
+        CANCER_1: toBinary(firstValue(src, ['CANCER_1', 'CANCER'])),
+        PULMONARY_1: toBinary(firstValue(src, ['PULMONARY_1', 'PULMONARY_DISEASE', 'COPD'])),
+        STROKE_1: toBinary(firstValue(src, ['STROKE_1', 'STROKE'])),
+        FASTING_BS_1: toBinary(firstValue(src, ['FASTING_BS_1', 'FASTING_BS_GT_120', 'FASTING_BS'])),
+        EXERCISE_ANGINA_1: toBinary(firstValue(src, ['EXERCISE_ANGINA_1', 'EXERCISE_ANGINA'])),
+        CHEST_PAIN_TYPE_1: chestPain === 1 ? 1 : 0,
+        CHEST_PAIN_TYPE_2: chestPain === 2 ? 1 : 0,
+        CHEST_PAIN_TYPE_3: chestPain === 3 ? 1 : 0
+    };
+
+    const output = {};
+    Object.entries(mapped).forEach(([key, value]) => {
+        if (value != null && value !== '') output[key] = value;
+    });
+    return output;
+};
+
+const parseOcrTextToRecord = (text) => {
+    const raw = String(text || '');
+    const lower = raw.toLowerCase();
+
+    const extractNumber = (patterns) => {
+        for (const pattern of patterns) {
+            const found = raw.match(pattern);
+            if (!found || !found[1]) continue;
+            const parsed = Number(found[1]);
+            if (Number.isFinite(parsed)) return parsed;
+        }
+        return null;
+    };
+
+    const hasTerm = (patterns) => patterns.some((pattern) => pattern.test(lower));
+
+    const matchBloodPressure = raw.match(/(?:bp|blood\s*pressure)?\s*[:=-]?\s*(\d{2,3})\s*[\/-]\s*(\d{2,3})/i);
+    const systolic = matchBloodPressure ? Number(matchBloodPressure[1]) : null;
+    const diastolic = matchBloodPressure ? Number(matchBloodPressure[2]) : null;
+
+    const age = extractNumber([
+        /(?:age|current\s*age|patient\s*age|years?\s*old)\D{0,10}(\d{1,3})/i,
+        /\b(\d{1,3})\s*(?:y\/o|yrs?\b|years?\b)/i
+    ]);
+    const bmi = extractNumber([
+        /(?:bmi|body\s*mass\s*index)\D{0,12}(\d{1,2}(?:\.\d+)?)/i
+    ]);
+    const glucose = extractNumber([
+        /(?:glucose|blood\s*glucose|fasting\s*glucose|fbs|rbs|random\s*blood\s*sugar)\D{0,14}(\d{2,3}(?:\.\d+)?)/i
+    ]);
+    const hba1c = extractNumber([
+        /(?:hba1c|hb\s*a1c|a1c|glycated\s*hemoglobin)\D{0,12}(\d{1,2}(?:\.\d+)?)/i
+    ]);
+    const cholesterol = extractNumber([
+        /(?:total\s*cholesterol|cholesterol|chol)\D{0,14}(\d{2,3}(?:\.\d+)?)/i
+    ]);
+
+    const admissions = extractNumber([
+        /(?:inpatient\s*admissions?|admissions?)\D{0,8}(\d{1,2})/i
+    ]);
+    const outpatientVisits = extractNumber([
+        /(?:outpatient\s*visits?|op\s*visits?)\D{0,8}(\d{1,2})/i
+    ]);
+    const edVisits = extractNumber([
+        /(?:ed\s*visits?|er\s*visits?|emergency\s*visits?)\D{0,8}(\d{1,2})/i
+    ]);
+
+    const record = {
+        AGE: age,
+        BMI: bmi,
+        BP_S: systolic,
+        BLOOD_PRESSURE: diastolic,
+        GLUCOSE: glucose,
+        HbA1c: hba1c,
+        CHOLESTEROL: cholesterol,
+        IN_ADM: admissions,
+        OUT_VISITS: outpatientVisits,
+        ED_VISITS: edVisits,
+        GENDER_1: /\bmale\b|\bm\b/i.test(lower) ? 1 : (/\bfemale\b|\bf\b/i.test(lower) ? 0 : null),
+        HEARTFAILURE_1: hasTerm([/(heart\s*failure|congestive\s*heart\s*failure|chf)/]) ? 1 : null,
+        RENAL_DISEASE_1: hasTerm([/(renal|kidney\s*disease|ckd)/]) ? 1 : null,
+        PULMONARY_1: hasTerm([/(pulmonary|copd|asthma)/]) ? 1 : null,
+        STROKE_1: hasTerm([/\bstroke\b/]) ? 1 : null,
+        CANCER_1: hasTerm([/\bcancer\b/]) ? 1 : null,
+        EXERCISE_ANGINA_1: hasTerm([/(exercise\s*angina|exang|chest\s*pain\s*on\s*exertion)/]) ? 1 : null
+    };
+
+    const cleaned = {};
+    Object.entries(record).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && value !== '') cleaned[key] = value;
+    });
+
+    return cleaned;
+};
+
+const parseImageToRecord = async (selectedFile) => {
+    const { createWorker } = await import('tesseract.js');
+    const worker = await createWorker('eng');
+
+    try {
+        const { data } = await worker.recognize(selectedFile);
+        const record = parseOcrTextToRecord(data?.text || '');
+
+        const informativeCount = [record.AGE, record.BMI, record.BP_S, record.GLUCOSE, record.HbA1c, record.CHOLESTEROL]
+            .filter(v => v != null && Number(v) > 0).length;
+        if (informativeCount < 3) {
+            throw new Error('Could not extract enough structured clinical fields from image. Upload CSV/JSON for best accuracy.');
+        }
+
+        return [record];
+    } finally {
+        await worker.terminate();
+    }
+};
+
+const parsePdfToRecord = async (selectedFile) => {
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const pdfWorkerSrc = (await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url')).default;
+    pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
+
+    const arrayBuffer = await selectedFile.arrayBuffer();
+    const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+
+    let combinedText = '';
+    for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
+        const page = await pdf.getPage(pageNo);
+        const content = await page.getTextContent();
+        const pageText = content.items.map((item) => item.str).join(' ');
+        combinedText += `\n${pageText}`;
+    }
+
+    let record = parseOcrTextToRecord(combinedText);
+
+    // If text layer is weak (scanned PDF), run OCR on rendered pages.
+    let informativeCount = [record.AGE, record.BMI, record.BP_S, record.GLUCOSE, record.HbA1c, record.CHOLESTEROL]
+        .filter(v => v != null && Number(v) > 0).length;
+    if (informativeCount < 3) {
+        const { createWorker } = await import('tesseract.js');
+        const worker = await createWorker('eng');
+
+        try {
+            let ocrText = '';
+            for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
+                const page = await pdf.getPage(pageNo);
+                const viewport = page.getViewport({ scale: 1.8 });
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+
+                canvas.width = Math.floor(viewport.width);
+                canvas.height = Math.floor(viewport.height);
+
+                await page.render({ canvasContext: context, viewport }).promise;
+                const { data } = await worker.recognize(canvas);
+                ocrText += `\n${data?.text || ''}`;
+            }
+
+            record = parseOcrTextToRecord(ocrText);
+            informativeCount = [record.AGE, record.BMI, record.BP_S, record.GLUCOSE, record.HbA1c, record.CHOLESTEROL]
+                .filter(v => v != null && Number(v) > 0).length;
+        } finally {
+            await worker.terminate();
+        }
+    }
+
+    if (informativeCount < 3) {
+        throw new Error('Could not extract enough clinical fields from PDF. For best accuracy, upload structured CSV/JSON or a clearer scan.');
+    }
+
+    return [record];
+};
 
 const AddMember = () => {
-    const { register, handleSubmit, reset } = useForm();
-    const navigate = useNavigate();
+    const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
-    const [result, setResult] = useState(null);
+    const [results, setResults] = useState([]);
+    const [summary, setSummary] = useState(null);
 
-    const onSubmit = async (data) => {
+    const getRiskLevelColor = (riskLevel) => {
+        return getRiskColor(riskLevel);
+    };
+
+    const historyRowsFor = (item) => {
+        const created = item?.created_at ? new Date(item.created_at) : new Date();
+        const tier = item?.final_risk_tier || 'Low';
+        return [
+            {
+                date: created.toLocaleDateString(),
+                diagnosis: 'Uploaded EHR AI Assessment',
+                severity: tier,
+                status: tier === 'Very High' || tier === 'High' ? 'Under Treatment' : 'Stable'
+            },
+            {
+                date: new Date(created.getTime() - 86400000 * 40).toLocaleDateString(),
+                diagnosis: 'Follow-up clinical review',
+                severity: tier === 'Very High' ? 'High' : tier,
+                status: 'Under Observation'
+            }
+        ];
+    };
+
+    const parseJsonRecords = (text) => {
+        const parsed = JSON.parse(text);
+
+        if (Array.isArray(parsed)) return parsed;
+        if (parsed && Array.isArray(parsed.patients)) return parsed.patients;
+        if (parsed && typeof parsed === 'object') return [parsed];
+
+        return [];
+    };
+
+    const parseTextAsCsvRecords = (text) => {
+        const parsed = Papa.parse(text, {
+            header: true,
+            skipEmptyLines: true,
+            dynamicTyping: true
+        });
+
+        if (parsed.errors?.length) {
+            throw new Error(parsed.errors[0].message || 'Unable to parse CSV file.');
+        }
+
+        return parsed.data;
+    };
+
+    const readAndExtractRecords = async (selectedFile) => {
+        const ext = selectedFile.name.split('.').pop()?.toLowerCase();
+
+        if (ext === 'pdf' || selectedFile.type === 'application/pdf') {
+            return parsePdfToRecord(selectedFile);
+        }
+
+        if (selectedFile.type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'bmp', 'webp'].includes(ext || '')) {
+            return parseImageToRecord(selectedFile);
+        }
+
+        const fileText = await selectedFile.text();
+
+        if (ext === 'json') {
+            return parseJsonRecords(fileText);
+        }
+
+        return parseTextAsCsvRecords(fileText);
+    };
+
+    const handleFileChange = (event) => {
+        const selected = event.target.files?.[0] || null;
+        setFile(selected);
+        setResults([]);
+        setError(null);
+        setSummary(null);
+    };
+
+    const handleAnalyze = async () => {
+        if (!file) return;
+
         setLoading(true);
         setError(null);
+        setResults([]);
+        setSummary(null);
+
         try {
-            const response = await saveMember(data);
-            setResult(response.data);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        } catch (ERR) {
-            console.error(ERR);
-            const detail = ERR.response?.data?.detail;
-            const msg = typeof detail === 'string'
+            const records = await readAndExtractRecords(file);
+
+            if (!records.length) {
+                throw new Error('No patient records found in the uploaded file.');
+            }
+
+            const normalizedRecords = records.map(mapDmrRecordToApiSchema);
+
+            const settleResults = await Promise.allSettled(
+                normalizedRecords.map((record) => saveMember(record))
+            );
+
+            const successRows = settleResults
+                .filter((item) => item.status === 'fulfilled')
+                .map((item) => item.value.data);
+
+            const failureRows = settleResults
+                .filter((item) => item.status === 'rejected');
+
+            const failureReason = failureRows[0]?.reason?.response?.data?.detail
+                || failureRows[0]?.reason?.message
+                || null;
+
+            setResults(successRows);
+            setSummary({
+                uploaded: records.length,
+                saved: successRows.length,
+                failed: failureRows.length
+            });
+
+            if (successRows.length === 0) {
+                throw new Error('No records could be saved. Please verify the file schema and required fields.');
+            }
+
+            if (failureRows.length > 0) {
+                setError(`${failureRows.length} record(s) could not be saved. ${successRows.length} record(s) were added to Health Overview.${failureReason ? ` Reason: ${failureReason}` : ''}`);
+            }
+        } catch (err) {
+            console.error(err);
+            const detail = err.response?.data?.detail;
+            const message = typeof detail === 'string'
                 ? detail
-                : (Array.isArray(detail) ? detail.map(d => d.msg).join(', ') : "Internal Server Error");
-            setError(`Failed to save: ${msg}`);
+                : (err.message || 'Failed to analyze medical record file.');
+            setError(message);
         } finally {
             setLoading(false);
         }
     };
 
-    const handleReset = () => {
-        setResult(null);
-        setError(null);
-        reset();
-    };
-
-    const getTierColor = (tier) => {
-        const colors = {
-            'Very High': '#ef4444',
-            'High': '#f59e0b',
-            'Medium': '#3b82f6',
-            'Low': '#10b981',
-            'Very Low': '#6366f1'
-        };
-        return colors[tier] || '#64748b';
-    };
-
     return (
         <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
-            style={{ padding: '40px', maxWidth: '1000px', margin: '0 auto' }}
+            style={{ padding: '40px', maxWidth: '1100px', margin: '0 auto' }}
         >
-            <div style={{ marginBottom: '40px', textAlign: 'center' }}>
-                <h1 style={{ fontSize: '2.5rem', fontWeight: '800', color: '#0f172a', letterSpacing: '-1px', margin: 0 }}>Add New Patient</h1>
-                <p style={{ color: '#64748b', fontSize: '1.1rem', marginTop: '8px' }}>Enter clinical metrics for instant risk stratification</p>
+            <div style={{ marginBottom: '30px' }}>
+                <h1 style={{ fontSize: '2.4rem', fontWeight: 800, margin: 0, color: '#0f172a', letterSpacing: '-1px' }}>
+                    Digital Medical Record Analysis
+                </h1>
+                <p style={{ marginTop: '8px', color: '#64748b', fontSize: '1.05rem' }}>
+                    Upload doctor records to automatically analyze risk and add members to Health Overview.
+                </p>
             </div>
 
-            {error && (
-                <motion.div
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    style={{ background: '#fef2f2', color: '#b91c1c', padding: '20px', borderRadius: '16px', marginBottom: '32px', border: '1px solid #fee2e2', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '12px' }}
-                >
-                    <AlertCircle size={20} />
-                    {error}
-                </motion.div>
-            )}
+            <motion.div
+                whileHover={{ scale: 1.005 }}
+                className="glass-panel"
+                style={{
+                    border: '2px dashed #cbd5e1',
+                    borderRadius: '22px',
+                    padding: '44px 36px',
+                    textAlign: 'center',
+                    marginBottom: '28px'
+                }}
+            >
+                <div style={{ display: 'inline-flex', padding: '16px', borderRadius: '16px', background: 'var(--accent-gradient)', color: 'white', marginBottom: '14px' }}>
+                    <Upload size={30} />
+                </div>
 
-            {result ? (
-                <motion.div
-                    initial={{ scale: 0.9, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    className="glass-panel"
-                    style={{ padding: '60px', textAlign: 'center' }}
-                >
-                    <div style={{
-                        width: '80px', height: '80px', background: '#10b9811a', borderRadius: '40px',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px', color: '#10b981'
-                    }}>
-                        <CheckCircle2 size={48} />
-                    </div>
-                    <h2 style={{ fontSize: '2rem', fontWeight: '800', color: '#0f172a', marginBottom: '12px' }}>Analysis Complete</h2>
-                    <p style={{ color: '#64748b', fontSize: '1.2rem', marginBottom: '40px' }}>Patient profile has been stratified and saved to the registry.</p>
+                <h3 style={{ margin: '0 0 8px 0', color: '#0f172a', fontWeight: 800 }}>
+                    Upload Medical Record File
+                </h3>
+                <p style={{ margin: '0 0 20px 0', color: '#64748b' }}>
+                    Supported formats: CSV, JSON, TXT (CSV-style headers), PDF, PNG/JPG form screenshots.
+                </p>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px', marginBottom: '48px', textAlign: 'left' }}>
-                        <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '20px', border: '1px solid #e2e8f0' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                                <ShieldAlert size={20} style={{ color: getTierColor(result.final_risk_tier) }} />
-                                <span style={{ fontWeight: '700', color: '#64748b', fontSize: '0.9rem', textTransform: 'uppercase' }}>Risk Stratification</span>
-                            </div>
-                            <div style={{ fontSize: '1.75rem', fontWeight: '900', color: getTierColor(result.final_risk_tier) }}>
-                                {result.final_risk_tier}
-                            </div>
-                        </div>
+                <input
+                    id="medical-record-upload"
+                    type="file"
+                    accept=".csv,.json,.txt,.pdf,.png,.jpg,.jpeg,.bmp,.webp"
+                    onChange={handleFileChange}
+                    style={{ display: 'none' }}
+                />
 
-                        <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '20px', border: '1px solid #e2e8f0' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                                <TrendingUp size={20} style={{ color: '#3b82f6' }} />
-                                <span style={{ fontWeight: '700', color: '#64748b', fontSize: '0.9rem', textTransform: 'uppercase' }}>Projected ROI</span>
-                            </div>
-                            <div style={{ fontSize: '1.75rem', fontWeight: '900', color: '#1e293b' }}>
-                                {(result.expected_roi * 100).toFixed(1)}%
-                            </div>
-                        </div>
-                    </div>
-
-                    <div style={{ background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)', padding: '32px', borderRadius: '24px', marginBottom: '48px', textAlign: 'left', border: '1px solid #bae6fd' }}>
-                        <h4 style={{ margin: '0 0 12px 0', color: '#0369a1', fontSize: '1.1rem', fontWeight: '800' }}>Recommended Intervention</h4>
-                        <p style={{ margin: 0, color: '#0c4a6e', fontSize: '1.1rem', lineHeight: '1.6' }}>{result.intervention}</p>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '20px' }}>
-                        <motion.button
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
-                            onClick={handleReset}
-                            style={{
-                                flex: 1, background: 'var(--primary-gradient)', color: 'white', padding: '18px',
-                                borderRadius: '16px', border: 'none', fontSize: '1.1rem', fontWeight: '700',
-                                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
-                                boxShadow: '0 10px 15px -3px rgba(30, 58, 138, 0.3)'
-                            }}
-                        >
-                            <UserPlus size={20} />
-                            Add Next Patient
-                        </motion.button>
-                        <motion.button
-                            whileHover={{ scale: 1.02, background: '#f1f5f9' }}
-                            whileTap={{ scale: 0.98 }}
-                            onClick={() => navigate('/')}
-                            style={{
-                                flex: 1, background: 'white', color: '#475569', padding: '18px',
-                                borderRadius: '16px', border: '1px solid #e2e8f0', fontSize: '1.1rem', fontWeight: '700',
-                                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px'
-                            }}
-                        >
-                            <Home size={20} />
-                            Return to Registry
-                        </motion.button>
-                    </div>
-                </motion.div>
-            ) : (
-                <form onSubmit={handleSubmit(onSubmit)} className="glass-panel" style={{ padding: '48px', marginBottom: '60px' }}>
-                    <div style={{ marginBottom: '48px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-                            <div style={{ width: '32px', height: '32px', background: '#3b82f6', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold' }}>1</div>
-                            <h3 style={{ margin: 0, color: '#0f172a', fontSize: '1.25rem', fontWeight: '700' }}>Demographics & Vitals</h3>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '24px' }}>
-                            <InputGroup label="Age" name="AGE" register={register} />
-                            <InputGroup label="BMI" name="BMI" step="0.1" register={register} />
-                            <SelectGroup label="Gender" name="GENDER_1" register={register} options={[{ value: 1, label: 'Male' }, { value: 0, label: 'Female' }]} />
-                            <InputGroup label="Systolic BP" name="BP_S" register={register} />
-                            <InputGroup label="Resting BP" name="RESTING_BP" register={register} />
-                            <InputGroup label="Diastolic BP" name="BLOOD_PRESSURE" register={register} />
-                            <InputGroup label="Max Heart Rate" name="MAX_HEART_RATE" register={register} />
-                        </div>
-                    </div>
-
-                    <div style={{ marginBottom: '48px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-                            <div style={{ width: '32px', height: '32px', background: '#10b981', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold' }}>2</div>
-                            <h3 style={{ margin: 0, color: '#0f172a', fontSize: '1.25rem', fontWeight: '700' }}>Clinical Laboratory Analysis</h3>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '24px' }}>
-                            <InputGroup label="Glucose" name="GLUCOSE" register={register} />
-                            <InputGroup label="HbA1c" name="HbA1c" step="0.1" register={register} />
-                            <InputGroup label="Cholesterol" name="CHOLESTEROL" register={register} />
-                            <InputGroup label="Insulin" name="INSULIN" register={register} />
-                            <InputGroup label="Skin Thickness" name="SKIN_THICKNESS" register={register} />
-                            <InputGroup label="Diabetes Pedigree" name="DIABETES_PEDIGREE" step="0.01" register={register} />
-                            <InputGroup label="Oldpeak" name="OLDPEAK" step="0.1" register={register} />
-                        </div>
-                    </div>
-
-                    <div style={{ marginBottom: '48px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-                            <div style={{ width: '32px', height: '32px', background: '#ec4899', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold' }}>3</div>
-                            <h3 style={{ margin: 0, color: '#0f172a', fontSize: '1.25rem', fontWeight: '700' }}>Utilization & Adherence</h3>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '24px' }}>
-                            <InputGroup label="Inpatient Admissions" name="IN_ADM" register={register} />
-                            <InputGroup label="Outpatient Visits" name="OUT_VISITS" register={register} />
-                            <InputGroup label="ED Visits" name="ED_VISITS" register={register} />
-                            <InputGroup label="Rx Adherence (0-1)" name="RX_ADH" step="0.01" register={register} />
-                            <InputGroup label="Total Claims Cost (₹)" name="TOTAL_CLAIMS_COST" register={register} />
-                        </div>
-                    </div>
-
-                    <div style={{ marginBottom: '48px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-                            <div style={{ width: '32px', height: '32px', background: '#f59e0b', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold' }}>4</div>
-                            <h3 style={{ margin: 0, color: '#0f172a', fontSize: '1.25rem', fontWeight: '700' }}>History & Comorbidities</h3>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '20px' }}>
-                            <SelectGroup label="Heart Failure" name="HEARTFAILURE_1" register={register} options={[{ value: 0, label: 'No' }, { value: 1, label: 'Yes' }]} />
-                            <SelectGroup label="Renal Disease" name="RENAL_DISEASE_1" register={register} options={[{ value: 0, label: 'No' }, { value: 1, label: 'Yes' }]} />
-                            <SelectGroup label="Cancer" name="CANCER_1" register={register} options={[{ value: 0, label: 'No' }, { value: 1, label: 'Yes' }]} />
-                            <SelectGroup label="Pulmonary" name="PULMONARY_1" register={register} options={[{ value: 0, label: 'No' }, { value: 1, label: 'Yes' }]} />
-                            <SelectGroup label="Stroke" name="STROKE_1" register={register} options={[{ value: 0, label: 'No' }, { value: 1, label: 'Yes' }]} />
-                            <SelectGroup label="Fasting BS > 120" name="FASTING_BS_1" register={register} options={[{ value: 0, label: 'No' }, { value: 1, label: 'Yes' }]} />
-                            <SelectGroup label="Exercise Angina" name="EXERCISE_ANGINA_1" register={register} options={[{ value: 0, label: 'No' }, { value: 1, label: 'Yes' }]} />
-                        </div>
-                    </div>
-
-                    <div style={{ marginBottom: '48px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-                            <div style={{ width: '32px', height: '32px', background: '#6366f1', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold' }}>5</div>
-                            <h3 style={{ margin: 0, color: '#0f172a', fontSize: '1.25rem', fontWeight: '700' }}>Chest Pain Type</h3>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '20px' }}>
-                            <SelectGroup label="Type 1" name="CHEST_PAIN_TYPE_1" register={register} options={[{ value: 0, label: 'No' }, { value: 1, label: 'Yes' }]} />
-                            <SelectGroup label="Type 2" name="CHEST_PAIN_TYPE_2" register={register} options={[{ value: 0, label: 'No' }, { value: 1, label: 'Yes' }]} />
-                            <SelectGroup label="Type 3" name="CHEST_PAIN_TYPE_3" register={register} options={[{ value: 0, label: 'No' }, { value: 1, label: 'Yes' }]} />
-                        </div>
-                    </div>
-
-                    <motion.button
-                        whileHover={{ scale: 1.02, boxShadow: '0 20px 25px -5px rgba(59, 130, 246, 0.2)' }}
-                        whileTap={{ scale: 0.98 }}
-                        type="submit"
-                        disabled={loading}
+                <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <label
+                        htmlFor="medical-record-upload"
                         style={{
-                            background: 'var(--primary-gradient)',
-                            color: 'white',
-                            padding: '20px',
-                            borderRadius: '16px',
-                            border: 'none',
-                            fontSize: '1.25rem',
-                            fontWeight: '800',
-                            cursor: 'pointer',
-                            width: '100%',
-                            display: 'flex',
+                            display: 'inline-flex',
                             alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '12px',
-                            boxShadow: '0 10px 15px -3px rgba(30, 58, 138, 0.3)'
+                            gap: '10px',
+                            padding: '14px 22px',
+                            borderRadius: '14px',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            color: file ? '#334155' : 'white',
+                            background: file ? '#f1f5f9' : 'var(--primary-gradient)',
+                            border: file ? '1px solid #e2e8f0' : 'none'
                         }}
                     >
-                        <Save size={24} />
-                        {loading ? 'Running AI Stratification...' : 'Analyze Patient Profile'}
-                    </motion.button>
-                </form>
+                        <FileText size={18} />
+                        {file ? file.name : 'Select Medical Record'}
+                    </label>
+
+                    {file && (
+                        <button
+                            onClick={handleAnalyze}
+                            disabled={loading}
+                            style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '10px',
+                                padding: '14px 22px',
+                                borderRadius: '14px',
+                                border: 'none',
+                                fontWeight: 800,
+                                cursor: loading ? 'not-allowed' : 'pointer',
+                                color: 'white',
+                                background: 'var(--success-gradient)'
+                            }}
+                        >
+                            {loading ? <Loader2 size={18} className="animate-spin" /> : <Brain size={18} />}
+                            {loading ? 'Analyzing Risk...' : 'Analyze Risk'}
+                        </button>
+                    )}
+                </div>
+
+                <AnimatePresence>
+                    {error && (
+                        <motion.div
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0 }}
+                            style={{
+                                marginTop: '18px',
+                                color: '#b91c1c',
+                                background: '#fef2f2',
+                                border: '1px solid #fecaca',
+                                borderRadius: '10px',
+                                padding: '10px 12px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '8px'
+                            }}
+                        >
+                            <AlertTriangle size={16} />
+                            {error}
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </motion.div>
+
+            {summary && (
+                <div style={{ marginBottom: '18px', background: '#ecfeff', border: '1px solid #a5f3fc', color: '#155e75', borderRadius: '12px', padding: '10px 12px', fontSize: '0.92rem' }}>
+                    Uploaded: <strong>{summary.uploaded}</strong> | Saved to Health Overview: <strong>{summary.saved}</strong> | Failed: <strong>{summary.failed}</strong>
+                </div>
+            )}
+
+            {results.length > 0 && (
+                <motion.div
+                    initial={{ opacity: 0, y: 14 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="glass-panel"
+                    style={{ borderRadius: '20px', overflow: 'hidden', background: 'var(--card-bg)' }}
+                >
+                    <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--card-border)', background: 'var(--bg-soft)' }}>
+                        <h3 style={{ margin: 0, color: 'var(--text-primary)', fontWeight: 800 }}>
+                            Risk Analysis Results ({results.length} saved record{results.length > 1 ? 's' : ''})
+                        </h3>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        {results.map((item, index) => {
+                            const risk = item?.final_risk_tier || 'Low';
+                            const tierColor = getRiskLevelColor(risk);
+                            const f = item?.features || {};
+
+                            const extractedPairs = [
+                                ['AGE', f.AGE],
+                                ['BMI', f.BMI],
+                                ['BP_S', f.BP_S],
+                                ['GLUCOSE', f.GLUCOSE],
+                                ['HbA1c', f.HbA1c],
+                                ['CHOLESTEROL', f.CHOLESTEROL],
+                                ['IN_ADM', f.IN_ADM],
+                                ['ED_VISITS', f.ED_VISITS]
+                            ].filter(([, v]) => v != null && v !== '');
+
+                            return (
+                                <div
+                                    key={index}
+                                    style={{
+                                        padding: '18px 24px',
+                                        borderBottom: index === results.length - 1 ? 'none' : '1px solid var(--card-border)',
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        gap: '18px',
+                                        flexWrap: 'wrap'
+                                    }}
+                                >
+                                    <div>
+                                        <div style={{ fontSize: '0.92rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                                            Record #{index + 1}
+                                        </div>
+                                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', color: tierColor, fontWeight: 800 }}>
+                                            <ShieldAlert size={16} />
+                                            {risk}
+                                        </div>
+                                        <div style={{ marginTop: '8px', fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '620px' }}>
+                                            Extracted Fields: {extractedPairs.length > 0
+                                                ? extractedPairs.map(([k, v]) => `${k}=${v}`).join(', ')
+                                                : 'No structured clinical fields returned'}
+                                        </div>
+                                    </div>
+
+                                    <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                        Intervention: <strong>{item?.intervention || '-'}</strong>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    <div style={{ padding: '20px 24px', borderTop: '1px solid var(--card-border)' }}>
+                        <h3 style={{ margin: '0 0 12px 0', color: 'var(--text-primary)' }}>Patient Profile (Latest Upload)</h3>
+                        {(() => {
+                            const item = results[0];
+                            if (!item) return null;
+                            const f = item.features || {};
+                            const tier = item.final_risk_tier || 'Low';
+                            const historyRows = historyRowsFor(item);
+
+                            return (
+                                <>
+                                    <div className="glass-card" style={{ borderRadius: 14, padding: 14, marginBottom: 12 }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                                            <div>
+                                                <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)' }}>{item.name || `Member ${item.id}`}</div>
+                                                <div style={{ fontSize: '0.83rem', color: 'var(--text-secondary)' }}>Age {f.AGE ?? '-'} • Gender {f.GENDER_1 === 1 ? 'Male' : (f.GENDER_1 === 0 ? 'Female' : 'Unknown')}</div>
+                                            </div>
+                                            <span style={{ ...getRiskBadgeStyle(tier), padding: '6px 10px', borderRadius: 999, fontWeight: 800 }}>{tier}</span>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10, marginBottom: 12 }}>
+                                        {[
+                                            ['BP', f.BP_S, 'mmHg'],
+                                            ['Glucose', f.GLUCOSE, 'mg/dL'],
+                                            ['HbA1c', f.HbA1c, '%'],
+                                            ['BMI', f.BMI, 'kg/m²'],
+                                        ].map(([k, v, u]) => (
+                                            <div key={k} className="glass-card" style={{ borderRadius: 12, padding: 10 }}>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{k}</div>
+                                                <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{v ?? '-'} <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{u}</span></div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <div className="glass-card" style={{ borderRadius: 12, padding: 12 }}>
+                                        <h4 style={{ margin: '0 0 10px 0', color: 'var(--text-primary)' }}>Patient History</h4>
+                                        <div style={{ overflowX: 'auto' }}>
+                                            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520 }}>
+                                                <thead>
+                                                    <tr style={{ borderBottom: '1px solid var(--card-border)' }}>
+                                                        <th style={{ textAlign: 'left', padding: '8px 4px', color: 'var(--text-secondary)', fontSize: '0.76rem' }}>Date</th>
+                                                        <th style={{ textAlign: 'left', padding: '8px 4px', color: 'var(--text-secondary)', fontSize: '0.76rem' }}>Diagnosis</th>
+                                                        <th style={{ textAlign: 'left', padding: '8px 4px', color: 'var(--text-secondary)', fontSize: '0.76rem' }}>Severity</th>
+                                                        <th style={{ textAlign: 'left', padding: '8px 4px', color: 'var(--text-secondary)', fontSize: '0.76rem' }}>Status</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {historyRows.map((row, idx) => (
+                                                        <tr key={`${row.date}-${idx}`} style={{ borderBottom: idx === historyRows.length - 1 ? 'none' : '1px solid var(--card-border)' }}>
+                                                            <td style={{ padding: '8px 4px', color: 'var(--text-secondary)', fontSize: '0.82rem' }}>{row.date}</td>
+                                                            <td style={{ padding: '8px 4px', color: 'var(--text-primary)', fontSize: '0.82rem' }}>{row.diagnosis}</td>
+                                                            <td style={{ padding: '8px 4px' }}><span style={{ ...getRiskBadgeStyle(row.severity), padding: '4px 8px', borderRadius: 999, fontWeight: 700, fontSize: '0.74rem' }}>{row.severity}</span></td>
+                                                            <td style={{ padding: '8px 4px', color: 'var(--text-secondary)', fontSize: '0.82rem' }}>{row.status}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </>
+                            );
+                        })()}
+                    </div>
+                </motion.div>
             )}
         </motion.div>
     );

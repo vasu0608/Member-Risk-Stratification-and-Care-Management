@@ -7,4 +7,8 @@ p = {
 r = requests.post('http://localhost:8000/predict/batch', json={'patients': [p]})
 res = r.json()[0]
 for k, v in res.items():
-    print(f"{k}: {v.get('probability')} -> {v.get('risk_level')}")
+    if isinstance(v, dict) and 'risk_level' in v:
+        print(f"{k}: {v.get('probability')} -> {v.get('risk_level')}")
+
+print(f"final_risk_tier: {res.get('final_risk_tier')}")
+print(f"intervention: {res.get('intervention')}")
